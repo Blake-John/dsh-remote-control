@@ -122,9 +122,97 @@ function createFixture() {
   return { server, requests, shutdown }
 }
 
+/**
+ * A stand-in Harness that restarts the way the Desktop host does: a fresh
+ * launch token each time and, unless the port is kept, a fresh OS-assigned port.
+ */
+function createRotatingFixture() {
+  let epoch = 1
+  let server
+  let origin
+  const sockets = new Set()
+
+  const authorized = request => String(request.headers.cookie ?? '').includes(`dsh-auth-rotating=${epoch}`)
+
+  const onRequest = (request, response) => {
+    const url = new URL(String(request.url ?? '/'), 'http://fixture.invalid')
+    if (url.pathname === '/' && url.searchParams.has('token')) {
+      response.writeHead(302, { location: './', 'set-cookie': `dsh-auth-rotating=${epoch}; Path=/; HttpOnly` })
+      response.end()
+      return
+    }
+    if (!authorized(request)) {
+      response.writeHead(401, { 'content-type': 'text/plain' })
+      response.end('unauthorized')
+      return
+    }
+    if (url.pathname === '/echo') {
+      const chunks = []
+      request.on('data', chunk => chunks.push(chunk))
+      request.on('end', () => {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ epoch, bytes: Buffer.concat(chunks).length }))
+      })
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    response.end(`epoch ${epoch}`)
+  }
+
+  const onUpgrade = (request, socket) => {
+    if (!authorized(request)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\n')
+    socket.on('data', chunk => socket.write(chunk))
+    socket.on('error', () => socket.destroy())
+  }
+
+  const start = (port = 0) => new Promise((resolve) => {
+    server = http.createServer(onRequest)
+    server.on('upgrade', onUpgrade)
+    server.on('connection', (socket) => {
+      sockets.add(socket)
+      socket.on('close', () => sockets.delete(socket))
+      socket.on('error', () => socket.destroy())
+    })
+    server.listen(port, '127.0.0.1', () => {
+      origin = `http://127.0.0.1:${server.address().port}`
+      resolve()
+    })
+  })
+
+  const stop = () => new Promise((resolve) => {
+    for (const socket of sockets) socket.destroy()
+    sockets.clear()
+    server.closeAllConnections?.()
+    server.close(() => resolve())
+  })
+
+  return {
+    start,
+    stop,
+    get origin() { return origin },
+    get epoch() { return epoch },
+    /**
+     * Mint a new launch token. `samePort` keeps the listener (a credential
+     * rotation); otherwise the server rebinds on a new port, as Desktop does.
+     */
+    async restart({ samePort = false } = {}) {
+      epoch += 1
+      if (samePort) return
+      await stop()
+      await start(0)
+    },
+  }
+}
+
 /** The smallest Cordis stand-in `mount` needs. */
-function createContext(fixtureOrigin, { admitted = true } = {}) {
-  const url = new URL(fixtureOrigin)
+function createContext(fixtureOrigin, { admitted = true, credential = 'dsh-auth-fixture=ok' } = {}) {
+  const readOrigin = typeof fixtureOrigin === 'function' ? fixtureOrigin : () => fixtureOrigin
+  const url = new URL(readOrigin())
   const channels = new Map()
   const routes = new Map()
   const ctx = {
@@ -137,7 +225,7 @@ function createContext(fixtureOrigin, { admitted = true } = {}) {
       host: '127.0.0.1',
       port: Number(url.port),
       protocol: 'http:',
-      getOrigin: () => fixtureOrigin,
+      getOrigin: () => readOrigin(),
       register(route) {
         assert.ok(!routes.has(route.path), `duplicate route ${route.path}`)
         routes.set(route.path, route)
@@ -151,7 +239,8 @@ function createContext(fixtureOrigin, { admitted = true } = {}) {
       admit(request) {
         if (!admitted) return { rejection: 401 }
         const cookie = String(request.headers.cookie ?? '')
-        return cookie.includes('dsh-auth-fixture=ok')
+        const accepted = typeof credential === 'function' ? credential() : credential
+        return cookie.includes(accepted)
           ? { peer: { id: 'peer-1' } }
           : { rejection: 401 }
       },
@@ -620,5 +709,89 @@ describe('rate limiting', () => {
       await fixture.shutdown()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('a Desktop Harness that restarts', () => {
+  let fixture
+  let api
+  let dir
+  let entryUrl
+  let sessionCookie
+  const PASSWORD = 'desktop-restart-passphrase'
+
+  before(async () => {
+    fixture = createRotatingFixture()
+    await fixture.start()
+    dir = mkdtempSync(join(tmpdir(), 'dsh-remote-control-desktop-'))
+    const { ctx } = createContext(() => fixture.origin, {
+      credential: () => `dsh-auth-rotating=${fixture.epoch}`,
+    })
+    api = createRemoteControl({
+      ctx,
+      config: normalizeConfig({ statePath: join(dir, 'state.json'), sessionDays: 30 }),
+      webServer: ctx.webServer,
+      connection: ctx.connection,
+    })
+    assert.equal((await api.rpc('password/set', { next: PASSWORD })).ok, true)
+    const applied = await api.rpc('listener/apply', { enabled: true, host: '127.0.0.1', port: 0 })
+    assert.equal(applied.ok, true, JSON.stringify(applied))
+    entryUrl = applied.value.listener.url
+    const logged = await login(entryUrl, PASSWORD)
+    assert.equal(logged.status, 302)
+    sessionCookie = logged.cookie
+  })
+
+  after(async () => {
+    await api.listener.stop()
+    await fixture.stop()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('re-acquires the credential when Desktop restarts on a new port', async () => {
+    const first = await fetch(`${entryUrl}echo`, { method: 'POST', headers: { cookie: sessionCookie }, body: 'one' })
+    assert.equal(first.status, 200)
+    assert.equal((await first.json()).epoch, 1)
+
+    await fixture.restart()
+
+    // A POST body cannot be replayed, so a stale cookie would surface as a 401
+    // instead of a retry: the credential must be fresh before the hop.
+    const second = await fetch(`${entryUrl}echo`, { method: 'POST', headers: { cookie: sessionCookie }, body: 'two' })
+    assert.equal(second.status, 200, 'the restarted Harness must be reached with a fresh credential')
+    assert.equal((await second.json()).epoch, 2)
+  })
+
+  it('refreshes and retries a WebSocket upgrade when only the token rotates', async () => {
+    await fixture.restart({ samePort: true })
+
+    const { port } = new URL(entryUrl)
+    const socket = net.connect(Number(port), '127.0.0.1')
+    await once(socket, 'connect')
+    socket.write([
+      'GET /api/remote.mux HTTP/1.1',
+      `host: 127.0.0.1:${port}`,
+      'connection: Upgrade',
+      'upgrade: websocket',
+      'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==',
+      'sec-websocket-version: 13',
+      `cookie: ${sessionCookie}`,
+      '',
+      '',
+    ].join('\r\n'))
+
+    let received = ''
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`no upgrade: ${received}`)), 3000)
+      socket.on('data', (chunk) => {
+        received += chunk.toString('utf8')
+        if (received.includes('101 Switching Protocols')) {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+    })
+    assert.match(received, /101 Switching Protocols/u)
+    socket.destroy()
   })
 })
