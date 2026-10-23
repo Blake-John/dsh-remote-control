@@ -14,14 +14,22 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
-const source = readFileSync(join(import.meta.dirname, '..', 'client.js'), 'utf8')
+const root = join(import.meta.dirname, '..')
+const source = readFileSync(join(root, 'client.js'), 'utf8')
+/** The manifest name is the module id, so a rename never needs a test edit. */
+const packageName = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name
 
 describe('client bundle integrity', () => {
   it('parses as a classic script that registers one module factory', () => {
     // `new Function` throws on a syntax error without needing a browser.
     assert.doesNotThrow(() => new Function(source))
     assert.match(source, /window\.__ModuleLoader__\.load\(\{/u)
-    assert.match(source, /id: '@local\/dsh-remote-control'/u)
+    // The shell keys the browser module by the package name; a mismatch means
+    // the settings page silently never loads.
+    assert.ok(
+      source.includes(`id: '${packageName}'`),
+      `client.js module id must equal the package name ${JSON.stringify(packageName)}`,
+    )
   })
 
   it('never clears the entry form between an action and its reload', () => {

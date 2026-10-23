@@ -1,0 +1,45 @@
+name: ci
+
+# 推送 main 或开 PR 时跑：清单一致性 + 全量测试（Node 22 / 24）
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 校验（Node ${{ matrix.node }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 环境自检
+        run: |
+          node -v
+          npm -v
+
+      - name: 清单一致性
+        # 包名必须同时出现在 package.json / cordis.patch.yml / client.js，
+        # 少一处就会装出一个永远不加载的插件。
+        run: npm run check:manifest
+
+      - name: 语法检查
+        run: |
+          for file in index.js client.js lib/*.js scripts/*.mjs tests/*.mjs; do
+            node --check "$file"
+          done
+
+      - name: 测试
+        run: npm test

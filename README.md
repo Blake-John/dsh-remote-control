@@ -100,6 +100,16 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 
 设计取舍见 [docs/design.md](docs/design.md)；真机验收记录见 [docs/acceptance.md](docs/acceptance.md)。
 
+## 开发与发布
+
+```bash
+npm run check          # 清单一致性 + 54 条测试（等价于 CI）
+git push origin main   # 触发 ci.yml
+git tag -a v2.1.0 -m "…" && git push origin v2.1.0   # 触发 publish.yml → npm
+```
+
+细节（认证方式、可信发布、首次发布注意）见 [docs/publishing.md](docs/publishing.md)。
+
 ## License
 
 Apache-2.0 —— 见 [LICENSE](LICENSE)。

@@ -1,7 +1,6 @@
 {
-  "name": "@local/dsh-remote-control",
+  "name": "dsh-remote-control",
   "version": "2.0.0",
-  "private": true,
   "type": "module",
   "description": "Expose the Harness Web GUI to a phone behind one permanent password: own listener, password gate, per-device sessions, reverse proxy.",
   "license": "Apache-2.0",
@@ -20,11 +19,13 @@
     "icon.svg",
     "LICENSE",
     "README.md",
-    "docs/*.md",
-    "tests/*.mjs"
+    "docs/*.md"
   ],
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "check:manifest": "node scripts/check-manifest.mjs",
+    "check": "npm run check:manifest && npm test",
+    "prepublishOnly": "npm run check"
   },
   "dsh": {
     "bundle": {
@@ -39,5 +40,15 @@
         "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Blake-John/dsh-remote-control.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
   }
 }

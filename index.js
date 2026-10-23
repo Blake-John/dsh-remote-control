@@ -11,7 +11,7 @@
  * No tunnel, no NAT traversal: reaching the entry address across networks is
  * the user's Tailscale / ZeroTier / LAN decision.
  *
- * @module @local/dsh-remote-control
+ * @module dsh-remote-control
  */
 
 import { tmpdir } from 'node:os'

@@ -9,7 +9,7 @@
 # so changing it never needs a config edit or a CLI flag.
 - insert:
     - id: remote-control
-      name: '@local/dsh-remote-control'
+      name: 'dsh-remote-control'
       # The plugin resolves `webServer` and `connection` itself (injected access
       # first, then the non-throwing `ctx.get` lookup), so this row declares no
       # inject list: a declared dependency that a profile bundle cannot resolve
