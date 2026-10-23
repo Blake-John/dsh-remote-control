@@ -116,6 +116,19 @@ Harness 的浏览器认证只有一条路径：进程启动令牌 → `authorize
 | 保存的地址从网卡消失时下拉框静默显示别的地址 | 保留为独立选项并给出告警 |
 | `describeAgent`/cookie 选取靠猜测 | 取根路径交换的第一个 `dsh-auth-*` |
 
+### D15. 桌面版适配
+
+DSH 桌面版是 Electron 外壳 + 同一个 Harness 运行时：`apps/desktop-host` 用 `runProfile({ profile: 'desktop', args: ['--no-open','--host','127.0.0.1','--port','0'] })` 启动完整的 Web 应用，Electron 只负责加载打包前端并把 HTTP/WebSocket 转发给这个 Host。
+
+因此插件**不需要第二套实现**，五个前提在桌面版全部成立：`webServer` 与 `connection` 服务存在（桌面壳自己也用 `connection.authenticatedUrl()` 换 cookie）、上游地址来自 `webServer.getOrigin()`、凭据仍是 launch token → `dsh-auth-*`、客户端插件由 Host 提供、`webserver/index-inject` 照常收集。
+
+真正的差别只有一个：**桌面版每次启动用 OS 分配的端口和新令牌**。由此需要两处修正：
+
+1. **凭据跟随 origin 失效**。`UpstreamCredential` 记录取得 cookie 时的 origin；`ensure()` 发现当前 origin 变了就先作废再取。只在 401 之后补救不够——带 body 的 POST 和 WebSocket 升级都无法重放，旧 cookie 会直接表现为失败请求。
+2. **WebSocket 升级遇到 401 时刷新并重试一次**。隧道先读握手响应头再开始管道；若首行是 `HTTP/1.1 401`，说明 Harness 已重启而页面还握着旧 socket，刷新凭据后用同一个请求（含已读的 `head` 字节）重开一条隧道。重试只做一次，避免凭据持续失效时打转。
+
+状态文件仍与 `dsh web` 共用 `~/.dsh/remote-control/state.json`（密码与设备台账互通）；两个实例同时运行时需要给入口设不同端口，这是部署约定而非代码分支。
+
 ## 兼容与失效
 
 只读上游公开面：`webServer.{host,port,protocol,getOrigin,register}`, `webserver/index-inject`, `connection.{authenticatedUrl,rpc.handle}`, 客户端 `connection.{rpc,state,reconnect}`、`slots`、`locale`。

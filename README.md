@@ -55,7 +55,22 @@ plugin_manager action=install_bundle target=/绝对路径/dsh-remote-control
 3. 手机（同一 tailnet / 同一局域网）打开该地址，输入密码即可。之后长期免密，除非你下线该设备或改密码。
 4. 临时借用：生成一次性邀请码，让对方用码登录（不需要密码），用完可随时下线。
 
-> 端口说明：Harness 在 `127.0.0.1:3080`，入口在 `100.x:3080`，不同地址不冲突。若你把 Harness 也绑到了同一个地址，应用时会报 `EADDRINUSE`，把入口换成别的端口即可。
+> 端口说明：`dsh web` 在 `127.0.0.1:3080`，入口在 `100.x:3080`，不同地址不冲突。桌面版的 Harness 端口由系统分配，插件会自动跟随。若你把 Harness 也绑到了同一个地址，应用时会报 `EADDRINUSE`，把入口换成别的端口即可。
+
+## 桌面版（DSH Desktop）
+
+插件同样适用于 DeepSeek Harness 桌面版。桌面版是 Electron 外壳 + 同一个 Harness 运行时，插件在其中的行为与 `dsh web` 一致，只有两点差别：
+
+- **装到桌面版自己的 profile**：桌面版使用 `~/.dsh/profiles/desktop`，要在**桌面版窗口内**的插件管理器里安装；CLI 的安装命令装的是 web profile。
+- **Harness 每次启动换端口和令牌**：插件跟随 `webServer.getOrigin()` 取上游，origin 变化时自动重新换取凭据；WebSocket 升级遇到 401 会刷新凭据并重试一次。所以桌面版重启后手机页面会自行恢复，不用重装、也不用重设密码。
+
+安装步骤：
+
+1. 桌面版打开插件管理器 → 安装本地路径（本仓库目录）或 npm 包 `@blake_john/dsh-remote-control`；
+2. 重启桌面版（插件行在启动时加载）；
+3. 「设置 → 远程控制」设永久密码、选监听地址、打开入口，手机按同样方式访问。
+
+> 桌面版与 `dsh web` 共用 `~/.dsh/remote-control/state.json`（密码、设备台账互通）。如果两个都装并且同时运行，给它们设不同的入口端口即可。
 
 ## 安全边界
 
@@ -72,11 +87,11 @@ plugin_manager action=install_bundle target=/绝对路径/dsh-remote-control
 ## 测试与验证
 
 ```bash
-node --test tests/*.test.mjs    # 54 条：逻辑单测 + 真实 socket 的端到端 + 浏览器半静态守卫
+node --test tests/*.test.mjs    # 56 条：逻辑单测 + 真实 socket 的端到端 + 浏览器半静态守卫
 node --check index.js client.js lib/*.js
 ```
 
-端到端用例覆盖：未设凭据拒绝开启、通配地址拒绝、绑定与 URL 上报、登录页、错密码/对密码、代理头改写与凭据替换、2MB 上传流式、SSE 分段到达、WebSocket 隧道双向、无会话升级被拒、白名单 403、**部分字段的 apply 不清空白名单**、撤销并掐断活跃 socket（含**进行中的 HTTP 流**）、改密码强制全下线、邀请码单次有效、坏 CIDR 拒绝、关闭入口、限速冷却。
+端到端用例覆盖：未设凭据拒绝开启、通配地址拒绝、绑定与 URL 上报、登录页、错密码/对密码、代理头改写与凭据替换、2MB 上传流式、SSE 分段到达、WebSocket 隧道双向、无会话升级被拒、白名单 403、**部分字段的 apply 不清空白名单**、撤销并掐断活跃 socket（含**进行中的 HTTP 流**）、改密码强制全下线、邀请码单次有效、坏 CIDR 拒绝、关闭入口、限速冷却，以及**桌面版重启（换端口后重取凭据、令牌轮换后 WebSocket 升级重试）**。
 
 ## 安装后确认
 
