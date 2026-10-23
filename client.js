@@ -8,7 +8,7 @@
  * which is the one transport fix a browser cannot get from the Host.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-remote-control',
+  id: '@blake_john/dsh-remote-control',
   factory(require) {
     const React = require('react')
     const h = React.createElement
