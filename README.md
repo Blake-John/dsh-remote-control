@@ -98,7 +98,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 4. **TOTP 二次验证** 与 **会话有效期可配（含"永不过期"）**。
 5. **非 owner 权限分级**：把设备接进 `PrincipalMap` / `remoteAccess` 角色体系，实现"只能看会话、不能改设置"。
 
-设计取舍见 [docs/design.md](docs/design.md)。
+设计取舍见 [docs/design.md](docs/design.md)；真机验收记录见 [docs/acceptance.md](docs/acceptance.md)。
 
 ## License
 
