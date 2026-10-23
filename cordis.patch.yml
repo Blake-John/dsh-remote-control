@@ -1,0 +1,36 @@
+# dsh-remote-control bundle patch.
+#
+# One Host row plus the Client module declared in package.json `dsh.client`.
+# Every key below is optional; the defaults shown are what the plugin uses when
+# a key is absent, and a malformed value falls back to that default.
+#
+# Nothing here decides the entry address: the listener is configured from the
+# Web UI (Settings → Remote Control) and stored in the plugin's own state file,
+# so changing it never needs a config edit or a CLI flag.
+- insert:
+    - id: remote-control
+      name: '@local/dsh-remote-control'
+      # The plugin resolves `webServer` and `connection` itself (injected access
+      # first, then the non-throwing `ctx.get` lookup), so this row declares no
+      # inject list: a declared dependency that a profile bundle cannot resolve
+      # would leave the fiber waiting instead of activating.
+      config:
+        # Port the settings page proposes for the entry listener.
+        defaultPort: 3080
+        # Session lifetime in days, sliding on every use.
+        sessionDays: 180
+        # Language of the login page the entry serves: zh | en.
+        locale: zh
+        # One-time invite codes.
+        invite:
+          ttlMinutes: 10
+          length: 6
+          maxActive: 5
+        # Timeout for the server-side credential exchange with the Harness.
+        upstreamTimeoutMs: 5000
+        # Narrow-screen stylesheet injected into every served index.
+        mobile:
+          stylesheet: true
+        # Ledger and listener configuration. Defaults to
+        # $DSH_HOME/remote-control/state.json
+        # statePath: '/home/me/.dsh/remote-control/state.json'

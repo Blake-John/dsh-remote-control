@@ -1,0 +1,12 @@
+# Dependencies (this plugin has none, but a linked checkout may grow some)
+node_modules/
+
+# Local scratch
+*.log
+*.tmp
+.rc-diag*
+.DS_Store
+
+# Runtime state lives in $DSH_HOME/remote-control/, never in the repo
+state.json
+devices.json
