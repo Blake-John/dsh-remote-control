@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Expose the Harness Web GUI to a phone behind one permanent password: own listener, password gate, per-device sessions, reverse proxy.",
+  "license": "Apache-2.0",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -17,6 +18,7 @@
     "lib/*.js",
     "locale/*.json",
     "icon.svg",
+    "LICENSE",
     "README.md",
     "docs/*.md",
     "tests/*.mjs"

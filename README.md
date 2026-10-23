@@ -99,3 +99,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 5. **非 owner 权限分级**：把设备接进 `PrincipalMap` / `remoteAccess` 角色体系，实现"只能看会话、不能改设置"。
 
 设计取舍见 [docs/design.md](docs/design.md)。
+
+## License
+
+Apache-2.0 —— 见 [LICENSE](LICENSE)。
