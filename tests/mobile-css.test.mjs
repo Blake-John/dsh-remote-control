@@ -62,6 +62,25 @@ describe('mobile stylesheet scoping', () => {
     }
   })
 
+  it('scopes every hash-based selector inside the transcript', () => {
+    // Class names are CSS-module hashes: matching them is allowed only inside
+    // the chat flow, where a stale hash degrades one bubble instead of
+    // repositioning unrelated chrome.
+    const hashRules = MOBILE_STYLESHEET.split('}').filter(block => block.includes('[class*='))
+    assert.ok(hashRules.length >= 1, 'the bubble rule should exist')
+    for (const block of hashRules) {
+      assert.match(block, /\[data-chat-flow\]/u, `hash match outside the transcript: ${block.trim().slice(0, 80)}`)
+    }
+  })
+
+  it('makes the transcript full-bleed through the documented hooks', () => {
+    assert.match(MOBILE_STYLESHEET, /\[data-chat-flow\][^}]*max-width:\s*100%/u)
+    assert.match(MOBILE_STYLESHEET, /--dsh-chat-content-width:\s*100%/u)
+    assert.match(MOBILE_STYLESHEET, /:has\(> \[data-chat-flow\]\)/u)
+    // The editor cap keeps a long draft from eating the screen.
+    assert.match(MOBILE_STYLESHEET, /\[data-phase\][^}]*max-height/u)
+  })
+
   it('keys the keyboard fix off the visual-viewport variable', () => {
     assert.match(MOBILE_STYLESHEET, /#root\s*\{[^}]*height:\s*var\(--rc-vh\)/u)
   })
