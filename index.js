@@ -19,6 +19,7 @@ import { join } from 'node:path'
 
 import { listAddresses, parseCidr } from './lib/addresses.js'
 import { Gate, respond } from './lib/gate.js'
+import { MOBILE_BOOT_SCRIPT, MOBILE_STYLESHEET } from './lib/mobile-css.js'
 import { EntryListener } from './lib/listener.js'
 import { Proxy } from './lib/proxy.js'
 import { clampInt, State } from './lib/state.js'
@@ -55,24 +56,6 @@ const GATE_COPY = {
     note: 'Enter the permanent password set under Settings → Remote Control. A one-time invite code works too.',
   },
 }
-
-/**
- * Narrow-scope markup kept from v1: only rules that cannot change a desktop
- * layout, because every rule is behind a media query.
- */
-const MOBILE_STYLESHEET = `
-html { -webkit-text-size-adjust: 100%; }
-@media (max-width: 700px) {
-  /* iOS zooms the page when a focused field renders below 16px. */
-  input, textarea, select { font-size: max(16px, 1em); }
-}
-@media (pointer: coarse) {
-  button, [role="button"], a { touch-action: manipulation; }
-}
-@supports (padding: env(safe-area-inset-bottom)) {
-  body { padding-bottom: env(safe-area-inset-bottom); }
-}
-`.trim()
 
 /**
  * Normalize the row config so a malformed field degrades to a default.
@@ -451,9 +434,12 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
       JSON.stringify({ type: 'server-response', rpcId: body.rpcId, result }))
   }
 
-  // Narrow-screen polish for the shipped shell; a desktop layout is untouched.
+  // The phone-facing layer is additive and switchable: every rule is scoped to
+  // an attribute the client half sets, so with the switch off the document is
+  // the shipped UI and with it on nothing else changes.
   ctx.on('webserver/index-inject', (table) => {
     if (!config.mobile.stylesheet) return
+    table.push({ kind: 'script', placement: 'head', text: MOBILE_BOOT_SCRIPT })
     table.push({ kind: 'style', text: MOBILE_STYLESHEET })
   })
 

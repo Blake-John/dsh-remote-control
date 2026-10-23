@@ -14,6 +14,63 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const NS = 'remoteControl'
 
+    /** Per-device UI preference: `auto` (narrow screens only), `on`, `off`. */
+    const UI_PREF_KEY = 'dsh-rc.mobile-ui'
+    /** Kept in step with lib/mobile-css.js. */
+    const NARROW_QUERY = '(max-width: 700px)'
+    const UI_MODES = ['auto', 'on', 'off']
+    const uiListeners = new Set()
+    let uiPreference = readUiPreference()
+
+    /** Read the stored preference, tolerating blocked storage. */
+    function readUiPreference() {
+      try {
+        const stored = localStorage.getItem(UI_PREF_KEY)
+        return UI_MODES.includes(stored) ? stored : 'auto'
+      } catch {
+        return 'auto'
+      }
+    }
+
+    /** Current preference, for `useState` initialisers and subscribers. */
+    function uiPreferenceSnapshot() {
+      return uiPreference
+    }
+
+    /** Subscribe to preference changes; returns the unsubscribe. */
+    function subscribeUiPreference(listener) {
+      uiListeners.add(listener)
+      return () => uiListeners.delete(listener)
+    }
+
+    /** Mirror the visual viewport height into a CSS variable. */
+    function syncViewportHeight() {
+      const viewport = window.visualViewport
+      const height = viewport === undefined ? window.innerHeight : viewport.height
+      document.documentElement.style.setProperty('--rc-vh', `${Math.round(height)}px`)
+    }
+
+    /** Apply the preference to the document; the stylesheet keys off the attribute. */
+    function applyUiPreference() {
+      const narrow = window.matchMedia(NARROW_QUERY).matches
+      const optimised = uiPreference === 'on' || (uiPreference === 'auto' && narrow)
+      if (optimised) document.documentElement.setAttribute('data-rc-mobile', 'on')
+      else document.documentElement.removeAttribute('data-rc-mobile')
+      syncViewportHeight()
+    }
+
+    /** Store, apply and broadcast one preference. */
+    function setUiPreference(next) {
+      uiPreference = UI_MODES.includes(next) ? next : 'auto'
+      try {
+        localStorage.setItem(UI_PREF_KEY, uiPreference)
+      } catch {
+        // Private mode: the choice simply does not survive a reload.
+      }
+      applyUiPreference()
+      for (const listener of [...uiListeners]) listener()
+    }
+
     const zh = {
       nav: '远程控制',
       title: '远程控制',
@@ -91,6 +148,14 @@ window.__ModuleLoader__.load({
       copy: '复制',
       copied: '已复制',
       open: '打开',
+      uiTitle: '界面',
+      uiHint: '「优化」是给手机用的窄屏排版（键盘避让、大点击区、安全区、免缩放）；「原始」是桌面那套。切换立刻生效，也记住在这台设备上。',
+      uiAuto: '自动（窄屏用优化）',
+      uiOn: '优化',
+      uiOff: '原始',
+      uiCurrent: '当前：{mode}',
+      uiSwitch: '界面：{mode}',
+      uiSwitchHint: '点一下切换 优化 → 自动 → 原始',
       crashed: '这个面板渲染失败',
       crashedHint: '刷新页面可重试；若持续出现，请把浏览器控制台的报错贴出来。',
     }
@@ -172,6 +237,14 @@ window.__ModuleLoader__.load({
       copy: 'Copy',
       copied: 'Copied',
       open: 'Open',
+      uiTitle: 'Interface',
+      uiHint: 'Optimised is the phone layout (keyboard avoidance, larger hit areas, safe areas, no input zoom); Original is the desktop UI. The switch takes effect immediately and is remembered on this device.',
+      uiAuto: 'Auto (optimised when narrow)',
+      uiOn: 'Optimised',
+      uiOff: 'Original',
+      uiCurrent: 'Now: {mode}',
+      uiSwitch: 'UI: {mode}',
+      uiSwitchHint: 'Tap to cycle optimised → auto → original',
       crashed: 'This panel failed to render',
       crashedHint: 'Reload the page to retry; paste the browser console error if it keeps happening.',
     }
@@ -314,6 +387,91 @@ window.__ModuleLoader__.load({
       }, copied ? t('copied') : t('copy'))
     }
 
+    /** Whether this device looks like a thumb-driven, narrow screen. */
+    function usePhoneLike() {
+      const [phoneLike, setPhoneLike] = React.useState(() => window.matchMedia('(pointer: coarse)').matches
+        || window.matchMedia(NARROW_QUERY).matches)
+      React.useEffect(() => {
+        const queries = [window.matchMedia('(pointer: coarse)'), window.matchMedia(NARROW_QUERY)]
+        const update = () => setPhoneLike(queries.some(query => query.matches))
+        update()
+        for (const query of queries) query.addEventListener('change', update)
+        return () => {
+          for (const query of queries) query.removeEventListener('change', update)
+        }
+      }, [])
+      return phoneLike
+    }
+
+    /** Subscribe to the stored UI preference. */
+    function useUiPreference() {
+      const [preference, setPreference] = React.useState(uiPreferenceSnapshot)
+      React.useEffect(() => subscribeUiPreference(() => setPreference(uiPreferenceSnapshot())), [])
+      return preference
+    }
+
+    /** Label for one preference value. */
+    function uiModeLabel(t, mode) {
+      if (mode === 'on') return t('uiOn')
+      if (mode === 'off') return t('uiOff')
+      return t('uiAuto')
+    }
+
+    /**
+     * Floating switch in `shell.overlay`. It is keyed to the device shape rather
+     * than to the active mode, so it stays reachable after switching back to the
+     * original UI — that is the whole point of keeping both.
+     */
+    function UiModeSwitch(props) {
+      const t = props.t
+      const phoneLike = usePhoneLike()
+      const preference = useUiPreference()
+      if (!phoneLike) return null
+      const next = preference === 'on' ? 'auto' : preference === 'auto' ? 'off' : 'on'
+      return h('button', {
+        type: 'button',
+        title: t('uiSwitchHint'),
+        'aria-label': fill(t('uiSwitch'), { mode: uiModeLabel(t, preference) }),
+        onClick: () => setUiPreference(next),
+        style: {
+          position: 'fixed',
+          right: 'max(10px, env(safe-area-inset-right))',
+          bottom: 'calc(10px + env(safe-area-inset-bottom))',
+          zIndex: 900,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '7px 11px',
+          borderRadius: 999,
+          border: '1px solid var(--dsw-alias-border-l2)',
+          background: 'var(--dsw-alias-bg-overlay)',
+          color: 'var(--dsw-alias-label-secondary)',
+          font: '500 11px/1.2 inherit',
+          opacity: 0.82,
+          boxShadow: '0 2px 10px rgb(0 0 0 / 18%)',
+          cursor: 'pointer',
+          touchAction: 'manipulation',
+        },
+      }, fill(t('uiSwitch'), { mode: uiModeLabel(t, preference) }))
+    }
+
+    /** The switch card inside Settings → Remote Control. */
+    function UiModeCard(props) {
+      const t = props.t
+      const preference = useUiPreference()
+      return h('div', { style: S.card },
+        h('h2', { style: S.h2 }, t('uiTitle')),
+        h('p', { style: S.muted }, t('uiHint')),
+        h('div', { style: S.row }, UI_MODES.map(mode => h('button', {
+          key: mode,
+          type: 'button',
+          style: preference === mode ? S.primary : S.button,
+          'aria-pressed': preference === mode,
+          onClick: () => setUiPreference(mode),
+        }, uiModeLabel(t, mode)))),
+        h('p', { style: S.muted }, fill(t('uiCurrent'), { mode: uiModeLabel(t, preference) })))
+    }
+
     /** The Remote Control settings page. */
     function RemoteControlSection(props) {
       const t = props.t
@@ -435,6 +593,8 @@ window.__ModuleLoader__.load({
               : status.upstream.credential.state === 'ready' ? t('credentialReady')
                 : status.upstream.credential.state === 'failed' ? fill(t('credentialFailed'), { reason: status.upstream.credential.error })
                   : t('credentialIdle'))),
+
+        h(UiModeCard, { t }),
 
         h('div', { style: S.card },
           h('h2', { style: S.h2 }, t('entry')),
@@ -650,6 +810,36 @@ window.__ModuleLoader__.load({
             }
             return result.value
           })
+
+        ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'remote-control-ui-mode',
+          order: 90,
+          locale: NS,
+          inject: () => ({ t }),
+        }, UiModeSwitch))
+
+        // Apply the stored choice now (the head script only covers first paint)
+        // and follow keyboard, rotation and mode changes afterwards.
+        ctx.effect(() => {
+          applyUiPreference()
+          const viewport = window.visualViewport
+          const onViewport = () => syncViewportHeight()
+          const narrow = window.matchMedia(NARROW_QUERY)
+          const onNarrow = () => applyUiPreference()
+          viewport?.addEventListener('resize', onViewport)
+          viewport?.addEventListener('scroll', onViewport)
+          window.addEventListener('resize', onViewport)
+          window.addEventListener('orientationchange', onViewport)
+          narrow.addEventListener('change', onNarrow)
+          return () => {
+            viewport?.removeEventListener('resize', onViewport)
+            viewport?.removeEventListener('scroll', onViewport)
+            window.removeEventListener('resize', onViewport)
+            window.removeEventListener('orientationchange', onViewport)
+            narrow.removeEventListener('change', onNarrow)
+          }
+        }, 'dsh-remote-control: mobile ui')
 
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
