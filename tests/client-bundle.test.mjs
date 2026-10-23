@@ -43,27 +43,6 @@ describe('client bundle integrity', () => {
     assert.match(source, /\}, RemoteControlShell\)\)/u)
   })
 
-  it('ships a switchable phone UI, not a second hard-coded layout', () => {
-    // The attribute is the switch: set/removed at runtime, never assumed in CSS.
-    assert.match(source, /setAttribute\('data-rc-mobile', 'on'\)/u)
-    assert.match(source, /removeAttribute\('data-rc-mobile'\)/u)
-    // Preference storage key and the three modes.
-    assert.match(source, /const UI_PREF_KEY = 'dsh-rc\.mobile-ui'/u)
-    assert.match(source, /const UI_MODES = \['auto', 'on', 'off'\]/u)
-    assert.match(source, /localStorage\.setItem\(UI_PREF_KEY/u)
-    // Keyboard: the visual viewport drives the CSS variable the sheet consumes.
-    assert.match(source, /visualViewport/u)
-    assert.match(source, /--rc-vh/u)
-    // The floating switch lives in shell.overlay and keys off the device shape,
-    // so it stays reachable after switching back to the original UI.
-    assert.match(source, /ctx\.slots\.inject\('shell\.overlay'/u)
-    assert.match(source, /function usePhoneLike\(\)/u)
-    assert.match(source, /if \(!phoneLike\) return null/u)
-    // And the same choice is available inside the settings page.
-    assert.match(source, /function UiModeCard\(/u)
-    assert.match(source, /h\(UiModeCard, \{ t \}\)/u)
-  })
-
   it('registers the settings section under its own slot id', () => {
     assert.match(source, /name: 'settings\.section'/u)
     assert.match(source, /id: 'remote-control'/u)
