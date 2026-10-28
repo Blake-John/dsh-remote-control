@@ -76,6 +76,42 @@ html { -webkit-text-size-adjust: 100%; }
 `.trim()
 
 /**
+ * First script the page runs: park every error in a bounded buffer and flush
+ * it to the plugin's collector. Kept dependency-free and failure-proof — a
+ * failing reporter must never add an error of its own.
+ */
+const CLIENT_ERROR_CAPTURE = `
+(() => {
+  const queue = []
+  const push = (source, message, stack) => {
+    if (queue.length >= 40) queue.shift()
+    queue.push({ source, message: String(message ?? ''), stack: String(stack ?? ''), at: Date.now() })
+  }
+  window.addEventListener('error', (event) => {
+    push('error', event.message, event.error && event.error.stack)
+  })
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason
+    push('rejection', reason && (reason.message || reason.code) || String(reason), reason && reason.stack)
+  })
+  const flush = () => {
+    if (queue.length === 0) return
+    const body = JSON.stringify(queue.splice(0, queue.length))
+    try {
+      fetch('/__rc/client-errors', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+        keepalive: true,
+      }).catch(() => {})
+    } catch { }
+  }
+  setInterval(flush, 5000)
+  window.addEventListener('pagehide', flush)
+})();
+`.trim()
+
+/**
  * Normalize the row config so a malformed field degrades to a default.
  * @param {unknown} raw - the row's raw config.
  * @returns normalized config.
@@ -467,6 +503,70 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
     if (!config.mobile.stylesheet) return
     table.push({ kind: 'style', text: MOBILE_STYLESHEET })
   })
+
+  // First thing the page runs: capture errors into a bounded buffer and hand
+  // them to the collector on a timer. The resource failure this probes can
+  // happen before any plugin console ever reaches a desktop, so the page
+  // itself must keep the record.
+  ctx.on('webserver/index-inject', (table) => {
+    if (!config.diagnostics) return
+    table.push({ kind: 'script', placement: 'head', text: CLIENT_ERROR_CAPTURE })
+  })
+
+  // Client-side errors ride a plain route next to the RPC channel: the
+  // resource failure this probes can happen before the RPC half works, so the
+  // collector must not depend on admission succeeding. The report is accepted
+  // only from a request the gate or the Harness carrier already trusts.
+  ctx.effect(
+    () => webServer.register({
+      kind: 'exact',
+      path: '/__rc/client-errors',
+      handler: (request, response) => {
+        void collectClientErrors(request, response)
+      },
+    }),
+    'dsh-remote-control: client error collector',
+  )
+
+  /**
+   * Store one client error report.
+   * @param {import('node:http').IncomingMessage} request - incoming report.
+   * @param {import('node:http').ServerResponse} response - response to own.
+   */
+  async function collectClientErrors(request, response) {
+    // A proxied page request carries the entry session; a direct loopback hit
+    // carries the Harness cookie instead. Both name a reader we already trust.
+    const trusted = gate.authenticate(request) !== undefined
+      || (() => { try { return connection.admit({ headers: request.headers }) !== undefined } catch { return false } })()
+    if (!trusted) {
+      respond(response, 401, { 'content-type': 'text/plain; charset=utf-8' }, 'unauthorized')
+      return
+    }
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const body = Buffer.concat(chunks)
+    if (body.length > 8192) {
+      respond(response, 413, { 'content-type': 'text/plain; charset=utf-8' }, 'too large')
+      return
+    }
+    try {
+      const reports = JSON.parse(body.toString('utf8'))
+      if (!Array.isArray(reports)) throw new TypeError('expected an array')
+      for (const report of reports.slice(0, 20)) {
+        if (report !== null && typeof report === 'object') {
+          diagnostics.record('client-error', {
+            agent: request.headers['user-agent'],
+            message: String(report.message ?? '').slice(0, 500),
+            stack: String(report.stack ?? '').slice(0, 2000),
+            source: String(report.source ?? ''),
+          })
+        }
+      }
+      respond(response, 204, {}, '')
+    } catch {
+      respond(response, 400, { 'content-type': 'text/plain; charset=utf-8' }, 'invalid')
+    }
+  }
 
   // Tear the entry socket down with the plugin.
   ctx.effect(() => () => listener.stop(), 'dsh-remote-control: entry listener teardown')
