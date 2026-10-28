@@ -127,6 +127,29 @@ const CLIENT_ERROR_CAPTURE = `
       push('boot-entries total=' + wanted.length + ' matching=' + JSON.stringify(interesting.map(row => ({ id: row.id, rev: row.rev }))))
       const loader = globalThis.__ModuleLoader__
       push('loader-mode=' + (loader && loader.mode))
+      // The desktop Firefox control passed, so the difference is this engine.
+      // Report the newer platform APIs the client build assumes; one missing
+      // member explains a plugin that loads but never applies.
+      const features = {
+        withResolvers: typeof Promise.withResolvers === 'function',
+        allSettled: typeof Promise.allSettled === 'function',
+        any: typeof Promise.any === 'function',
+        randomUUID: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function',
+        subtle: typeof crypto !== 'undefined' && crypto.subtle !== undefined,
+        replaceAll: typeof ''.replaceAll === 'function',
+        arrayAt: typeof [].at === 'function',
+        structuredClone: typeof structuredClone === 'function',
+        resizeObserver: typeof ResizeObserver === 'function',
+        textDecoderStream: typeof TextDecoderStream === 'function',
+        compressionStream: typeof CompressionStream === 'function',
+        webSocket: typeof WebSocket === 'function',
+        abortController: typeof AbortController === 'function',
+        requestIdleCallback: typeof requestIdleCallback === 'function',
+        cssSupports: typeof CSS !== 'undefined' && typeof CSS.supports === 'function',
+        visibilityState: document.visibilityState,
+      }
+      const missing = Object.entries(features).filter(([, v]) => v === false).map(([k]) => k)
+      push('engine-features missing=' + JSON.stringify(missing) + ' full=' + JSON.stringify(features))
       const targets = interesting.filter(row => typeof row.url === 'string').slice(0, 6)
       Promise.all(targets.map(row => fetch(row.url, { method: 'GET', cache: 'no-store' })
         .then(response => row.id + ' -> ' + response.status + ' ' + (response.headers.get('content-type') ?? ''))
