@@ -108,6 +108,40 @@ const CLIENT_ERROR_CAPTURE = `
   }
   setInterval(flush, 5000)
   window.addEventListener('pagehide', flush)
+
+  // The resource failure under probe registers no exception: the provider's
+  // plugin simply never applies, and the module system's own importError sits
+  // behind ctx.modules, not on the window. So the page reports what it can
+  // see: whether the boot graph names the rows, and whether their bundles are
+  // fetchable from this device's own network position.
+  const probe = () => {
+    const rows = []
+    const push = (message) => {
+      if (queue.length >= 40) queue.shift()
+      queue.push({ source: 'probe', message: String(message).slice(0, 4000), stack: '', at: Date.now() })
+    }
+    try {
+      const boot = globalThis.__DSH_BOOT__
+      const wanted = (boot && boot.entries) || []
+      const interesting = wanted.filter(row => /workspace-files|client-resources|documentpreview|api-remotes|api-gateway/.test(row.id))
+      push('boot-entries total=' + wanted.length + ' matching=' + JSON.stringify(interesting.map(row => ({ id: row.id, rev: row.rev }))))
+      const loader = globalThis.__ModuleLoader__
+      push('loader-mode=' + (loader && loader.mode))
+      const targets = interesting.filter(row => typeof row.url === 'string').slice(0, 6)
+      Promise.all(targets.map(row => fetch(row.url, { method: 'GET', cache: 'no-store' })
+        .then(response => row.id + ' -> ' + response.status + ' ' + (response.headers.get('content-type') ?? ''))
+        .catch(error => row.id + ' -> FETCH-ERROR ' + error)))
+        .then((results) => {
+          for (const line of results) push(line)
+          push('probe-complete')
+          setTimeout(flush, 800)
+        })
+    } catch (probeError) {
+      push('probe-failed ' + probeError)
+      setTimeout(flush, 800)
+    }
+  }
+  setTimeout(probe, 12000)
 })();
 `.trim()
 
