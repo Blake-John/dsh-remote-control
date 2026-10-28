@@ -24,6 +24,7 @@ import {
   urlHost,
 } from '../lib/addresses.js'
 import { Gate, safeNext } from '../lib/gate.js'
+import { Diagnostics } from '../lib/diagnostics.js'
 import { describeAgent, readCookie, SESSION_COOKIE, State } from '../lib/state.js'
 import { buildUpgradeRequest } from '../lib/tunnel.js'
 import { rewriteRequestHeaders, rewriteResponseHeaders } from '../lib/proxy.js'
@@ -359,5 +360,41 @@ describe('proxy header rewriting', () => {
     assert.match(raw, /sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n/u)
     assert.doesNotMatch(raw, /dsh-rc-session/u)
     assert.match(raw, /connection: Upgrade\r\nupgrade: websocket\r\n\r\n$/u)
+  })
+})
+
+describe('socket diagnostics', () => {
+  it('records events and keeps the file bounded', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-rc-diag-'))
+    try {
+      const path = join(dir, 'sockets.log')
+      const diagnostics = new Diagnostics({ path })
+      for (let index = 0; index < 420; index += 1) diagnostics.record('upgrade', { index })
+      const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean)
+      assert.ok(lines.length <= 400, `kept ${String(lines.length)} lines`)
+      const last = JSON.parse(lines.at(-1))
+      assert.equal(last.event, 'upgrade')
+      assert.equal(last.index, 419)
+      assert.match(last.t, /^\d{4}-\d{2}-\d{2}T/u)
+      assert.equal(diagnostics.info().enabled, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('writes nothing when disabled and never throws on a bad path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-rc-diag-off-'))
+    try {
+      const disabled = new Diagnostics({ path: join(dir, 'off.log'), enabled: false })
+      disabled.record('upgrade')
+      assert.throws(() => statSync(join(dir, 'off.log')), /ENOENT/u)
+
+      // A directory where the file should be: the write fails, the plugin must not.
+      const broken = new Diagnostics({ path: dir })
+      broken.record('upgrade', { attempt: 1 })
+      assert.ok(typeof broken.info().error === 'string')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

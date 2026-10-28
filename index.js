@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { listAddresses, parseCidr } from './lib/addresses.js'
+import { Diagnostics } from './lib/diagnostics.js'
 import { Gate, respond } from './lib/gate.js'
 import { EntryListener } from './lib/listener.js'
 import { Proxy } from './lib/proxy.js'
@@ -85,6 +86,8 @@ export function normalizeConfig(raw) {
   const mobile = config.mobile !== null && typeof config.mobile === 'object' ? config.mobile : {}
   return {
     statePath: typeof config.statePath === 'string' && config.statePath.trim() !== '' ? config.statePath.trim() : undefined,
+    diagnosticsPath: typeof config.diagnosticsPath === 'string' && config.diagnosticsPath.trim() !== '' ? config.diagnosticsPath.trim() : undefined,
+    diagnostics: config.diagnostics !== false,
     defaultPort: clampInt(config.defaultPort, 3080, 1, 65_535),
     sessionDays: clampInt(config.sessionDays, 180, 1, 3650),
     locale: config.locale === 'en' ? 'en' : 'zh',
@@ -205,6 +208,12 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
     ?? tmpdir()
   const statePath = config.statePath ?? join(home, 'remote-control', 'state.json')
   const state = new State(statePath, { sessionDays: config.sessionDays })
+  // Beside the state file, so a report can be handed over without hunting for
+  // a terminal that may not be attached.
+  const diagnostics = new Diagnostics({
+    path: config.diagnosticsPath ?? join(home, 'remote-control', 'sockets.log'),
+    enabled: config.diagnostics,
+  })
   const credential = new UpstreamCredential({ webServer, connection }, { timeoutMs: config.upstreamTimeoutMs })
   const copy = () => GATE_COPY[config.locale]
   const gate = new Gate({
@@ -222,9 +231,10 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
     state,
     gate,
     proxy: new Proxy({ facts, credential, logger }),
-    tunnel: new Tunnel({ facts, credential, logger, gate }),
+    tunnel: new Tunnel({ facts, credential, logger, gate, diagnostics }),
     logger,
     copy,
+    diagnostics,
   })
 
   // Resume the previous entry configuration, reporting a bind failure instead
@@ -263,6 +273,7 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
       sessionDays: config.sessionDays,
       limits: { minPasswordLength: MIN_PASSWORD_LENGTH },
       statePath,
+      diagnostics: diagnostics.info(),
     }
   }
 
