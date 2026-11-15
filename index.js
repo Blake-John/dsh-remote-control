@@ -527,19 +527,37 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
    * @param {import('node:http').ServerResponse} response - response to own.
    */
   async function serveRpc(request, response) {
+    // A rejected admission is indistinguishable from an unreachable route once
+    // it reaches the phone, so record the facts that decided it.
+    const trace = (event, fields = {}) => diagnostics.record(event, {
+      host: request.headers.host,
+      origin: request.headers.origin,
+      fetchSite: request.headers['sec-fetch-site'],
+      cookieNames: String(request.headers.cookie ?? '').split(';')
+        .map(part => part.split('=')[0].trim()).filter(Boolean).join(','),
+      ...fields,
+    })
     let admission
     try {
-      admission = connection.admit({ headers: request.headers })
+      admission = connection.admit({
+        headers: request.headers,
+        method: request.method,
+        url: request.url,
+        socket: { destroyed: request.socket?.destroyed === true },
+      })
     } catch (error) {
+      trace('rpc-admit', { outcome: 'threw', message: error instanceof Error ? error.message : String(error) })
       logger.warn(`dsh-remote-control: admission failed: ${error instanceof Error ? error.message : String(error)}`)
       respond(response, 403, { 'content-type': 'text/plain; charset=utf-8' }, 'forbidden')
       return
     }
     if (admission === undefined || 'rejection' in admission) {
+      trace('rpc-admit', { outcome: 'rejected', rejection: admission?.rejection })
       const rejection = admission?.rejection ?? 403
       respond(response, rejection, { 'content-type': 'text/plain; charset=utf-8' }, rejection === 401 ? 'unauthorized' : 'forbidden')
       return
     }
+    trace('rpc-admit', { outcome: 'admitted' })
 
     const pathname = new URL(String(request.url ?? '/'), 'http://entry.invalid').pathname
     const endpoint = pathname.startsWith(`${RPC_CHANNEL}/`)
