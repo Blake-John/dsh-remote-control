@@ -37,6 +37,20 @@ export const name = 'dsh-remote-control'
  */
 const REQUIRED_SERVICES = ['webServer', 'connection']
 
+/**
+ * Declared anyway, because `connection.admit()` reaches
+ * `connection.authentication` through a *property* read on this fiber. That
+ * read is gated by `inject`, and without the declaration `admit()` throws
+ * `cannot get property "connection.authentication" without inject` — the route
+ * then answers 403 for a request whose credential was perfectly valid, and the
+ * entry looks broken while the socket log shows a correct cookie.
+ *
+ * `resolveServices` still runs, so a tree that never provides the carrier
+ * leaves the entry inert with one warning rather than failing to load; the
+ * declaration only makes the property reads inside the carrier legal.
+ */
+export const inject = ['webServer', 'connection', 'connection.authentication']
+
 /** Own RPC channel: the shared `/api` channel belongs to the Typert Gateway. */
 const RPC_CHANNEL = '/remoteControl'
 
