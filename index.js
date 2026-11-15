@@ -148,8 +148,16 @@ export function apply(ctx, rawConfig) {
   const attach = () => {
     const services = resolveServices(ctx)
     if (services === undefined) return false
-    createRemoteControl({ ctx, config, ...services })
-    return true
+    try {
+      createRemoteControl({ ctx, config, ...services })
+      return true
+    } catch (error) {
+      // A carrier that changed shape must not fail silently: without this the
+      // row loads, the entry listens, and every request dies in the proxy.
+      const logger = createLogger(ctx.get?.('logger') ?? ctx.logger)
+      logger.error(`dsh-remote-control: mount failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+      throw error
+    }
   }
   if (attach()) return
   // A sibling row may still be mounting. Retry on a low-frequency timer and say
@@ -229,6 +237,65 @@ function createLogger(raw) {
 }
 
 /**
+ * Capture the authenticated entry URL the carrier publishes.
+ *
+ * The launch token used to be reachable as `connection.authenticatedUrl()`.
+ * Harness moved browser authentication behind its own host package and now
+ * exposes the token only by appending a complete, credentialed URL to the
+ * `webserver/entry-url` event — emitted once, after the Loader settles, so a
+ * listener registered during `apply` always runs first. Requests arriving
+ * before that settle wait here rather than failing.
+ * @param {{ctx: object, logger: object}} options - carrier context and logger.
+ * @returns {(target: {authority: string, protocol: string}) => Promise<string>}
+ */
+function createLaunchUrlSource({ ctx, logger }) {
+  /** @type {string | undefined} */
+  let captured
+  /** @type {Array<(url: string) => void>} */
+  let waiters = []
+
+  const settle = (url) => {
+    captured = url
+    const pending = waiters
+    waiters = []
+    for (const resolve of pending) resolve(url)
+  }
+
+  ctx.effect(() => {
+    const disposer = ctx.on('webserver/entry-url', function collect(url, entries) {
+      // Listeners run in registration order over one shared array, so this one
+      // may well see `entries` before the token provider appends its row. Read
+      // the finished array on a microtask instead: every listener has returned
+      // by then, and the row this carrier contributed is present.
+      queueMicrotask(() => {
+        if (captured !== undefined) return
+        const candidate = [...entries.map(entry => entry?.url), url].find(value =>
+          typeof value === 'string' && /[?&]token=/u.test(value))
+        if (candidate !== undefined) settle(candidate)
+      })
+    })
+    return () => {
+      if (typeof disposer === 'function') disposer()
+    }
+  }, 'dsh-remote-control: launch url capture')
+
+  return async (target) => {
+    if (captured !== undefined) return captured
+    const pending = new Promise((resolve) => { waiters.push(resolve) })
+    // A carrier that never announces (printUrl off) must not hang the request:
+    // fall back to the bare origin so the failure names the missing token.
+    const timeout = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        logger.warn('dsh-remote-control: the carrier published no entry URL; the Harness credential cannot be redeemed')
+        resolve(`${target.protocol}//${target.authority}/`)
+      }, 5000)
+      timer.unref?.()
+    })
+    return Promise.race([pending, timeout])
+  }
+}
+
+/**
  * Mount the entry listener, its gate, the proxy, and the RPC surface.
  * @param {import('@deepseek-ai/cordis').Context} ctx - injected context.
  * @param {ReturnType<typeof normalizeConfig>} config - normalized config.
@@ -250,7 +317,8 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
     path: config.diagnosticsPath ?? join(home, 'remote-control', 'sockets.log'),
     enabled: config.diagnostics,
   })
-  const credential = new UpstreamCredential({ webServer, connection }, { timeoutMs: config.upstreamTimeoutMs })
+  const launchUrl = createLaunchUrlSource({ ctx, logger })
+  const credential = new UpstreamCredential({ webServer, connection, launchUrl }, { timeoutMs: config.upstreamTimeoutMs })
   const copy = () => GATE_COPY[config.locale]
   const gate = new Gate({
     state,
@@ -434,10 +502,17 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
   // row inserted by a profile bundle cannot reach, so it throws at
   // registration. Authentication still comes from `connection.admit()`, so the
   // route answers exactly like a Connection channel.
+  //
+  // `auth: 'anonymous'` is required, not a relaxation: the carrier defaults a
+  // route to `'required'`, and the only credential a proxied request can carry
+  // is this plugin's own session cookie, which the carrier cannot verify. The
+  // handler performs the same admission itself and answers 401/403 for a
+  // request that carries nothing.
   ctx.effect(
     () => webServer.register({
       kind: 'prefix',
       path: RPC_CHANNEL,
+      auth: 'anonymous',
       handler: (request, response) => {
         void serveRpc(request, response)
       },
@@ -521,6 +596,7 @@ export function createRemoteControl({ ctx, config, webServer, connection }) {
     () => webServer.register({
       kind: 'exact',
       path: '/__rc/client-errors',
+      auth: 'anonymous',
       handler: (request, response) => {
         void collectClientErrors(request, response)
       },

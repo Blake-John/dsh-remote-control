@@ -255,7 +255,12 @@ function createContext(fixtureOrigin, { admitted = true, credential = 'dsh-auth-
     effect(execute) {
       return execute()
     },
-    on() {
+    on(name, listener) {
+      if (name === 'webserver/entry-url') {
+        // Mirrors the carrier: the event fires once after the Loader settles,
+        // handing listeners a complete credentialed URL.
+        queueMicrotask(() => listener(`${readOrigin()}/?token=fixture-token`, []))
+      }
       return () => {}
     },
     inject(_deps, callback) {
@@ -630,6 +635,10 @@ describe('entry listener end to end', () => {
     const route = routes.get('/remoteControl')
     assert.ok(route !== undefined, 'the channel must be registered on webServer')
     assert.equal(route.kind, 'prefix')
+    // The carrier defaults a route to `required`, which admits only a live
+    // Peer: a proxied request carries this plugin's own session cookie, so an
+    // omitted policy would make the whole channel unreachable from the phone.
+    assert.equal(route.auth, 'anonymous', 'the channel authenticates itself via connection.admit')
 
     const envelope = (method) => JSON.stringify({ type: 'client-request', rpcId: 'rpc-1', method, payload: {} })
 
