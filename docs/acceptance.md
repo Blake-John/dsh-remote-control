@@ -64,6 +64,24 @@
 
 **处置**：在华为设备上使用 Chrome / Edge 等自带完整内核的浏览器访问入口即可。本插件的诊断设施保留（`~/.dsh/remote-control/sockets.log`，400 行上限）：入口 socket 生命周期 + 页面错误回传，供日后排查。
 
+## 上游升级回归：Harness 0.2.2（2026-11-15，2.2.1）
+
+**现象**：升级 DSH 到 0.2.2-rc.3 后，远程入口能打开、能登录、WebSocket 正常（日志里每次 101），但「设置 → 远程控制」**读不到配置**，所有 `/remoteControl` 调用失败。
+
+**原因**（三处叠加，详见 design D16）：
+
+| # | 变更 | 表现 |
+|---|---|---|
+| 1 | 路由 `auth` 默认值变为 `required` | carrier 在处理函数之前要求 Host 认证，代理请求带的是插件自己的 Cookie → 拒绝 |
+| 2 | `connection.authenticatedUrl()` 被移除 | 换凭据抛 `TypeError`，`The Harness credential is unavailable.` |
+| 3 | `admit()` 内部读 `connection.authentication` 受 `inject` 门控 | 凭据完全正确仍 403，异常被误报成"未授权" |
+
+**定位方式**：第 3 条无法从外部区分，最终靠 `sockets.log` 里新增的 `rpc-admit` 记录定案——`cookieNames` 显示 `dsh-auth-<authority 的 SHA-256>` 一字不差，而 `outcome` 是 `threw`，消息直接点名 `without inject`。
+
+**验证**（用户确认）：重启后设置页可正常读取配置，入口功能恢复。
+
+**回归保护**：e2e 增加断言钉住 `route.auth === 'anonymous'`，防止将来 carrier 默认值改动又悄悄关掉通道。
+
 ## 冻结说明
 
 2.0.0 表示**功能面稳定**，不是"不再改动"。以下情况才值得动它：
@@ -72,4 +90,4 @@
 2. 上游公开 API 变更导致挂载或代理失效；
 3. 明确的新需求（例如入口地址二维码、TLS 字段、多地址监听）。
 
-自动化测试（56 条）是回归基线：`node --test tests/*.test.mjs`。
+自动化测试（58 条）是回归基线：`node --test tests/*.test.mjs`。

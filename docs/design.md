@@ -129,9 +129,21 @@ DSH 桌面版是 Electron 外壳 + 同一个 Harness 运行时：`apps/desktop-h
 
 状态文件仍与 `dsh web` 共用 `~/.dsh/remote-control/state.json`（密码与设备台账互通）；两个实例同时运行时需要给入口设不同端口，这是部署约定而非代码分支。
 
+### D16. Harness 0.2.2 的两处破坏性变更
+
+升级到 0.2.2-rc.3 后，远程入口的每一次 `/remoteControl` 调用都被拒绝，设置页读不到自己的配置。三个独立原因叠在一起，任何一个单独存在都会让入口看起来"活着但不可用"。
+
+**一、`webServer.register` 的认证默认值变成 `required`。** 路由新增 `auth` 字段，缺省值从"放行"变成"必须有一个活着的 Peer"（`webserver/src/index.ts`：`auth ?? 'required'`）。插件注册 `/remoteControl` 时没有声明，于是 carrier 在处理函数之前就要求 Host 认证，而经过入口代理的请求携带的是**插件自己的会话 Cookie**（`dsh-rc-session`），Host 不认识 → 拒绝。修复：两条路由显式声明 `auth: 'anonymous'`，认证仍由插件自己通过 `connection.admit()` 完成。
+
+**二、`connection.authenticatedUrl()` 被移除。** 浏览器认证搬到 `packages/host/authentication-token/`，`HostConnectionHandle` 上已无此方法，调用直接抛 `TypeError`，凭据永远换不到。token 现在只以**完整 URL** 的形式随 `webserver/entry-url` 事件发布一次（在 Loader 结束后，所以插件的监听必然先注册）。修复：凭据换取改用捕获到的 URL；监听器在**微任务**里读 `entries` 数组，因为事件监听器共享同一个数组且本监听器可能先于 token provider 追加行。
+
+**三、`admit()` 内部要读 `connection.authentication`。** 这是最隐蔽的一条：凭据完全正确（日志里 `dsh-auth-<authority 的 SHA-256>` 一字不差），却仍然 403。原因是 Cordis 对**属性访问**施加 `inject` 门控，而插件一直没有声明 `inject`（早期为了"解析不到时不拖垮整个 entry"）。0.2.2 把浏览器认证拆成独立子服务后，`admit()` 内部的这次属性读取就开始抛 `cannot get property "connection.authentication" without inject`，被 `serveRpc` 的 catch 统一变成 403。修复：声明 `inject = ['webServer', 'connection', 'connection.authentication']`。该服务由 `connection` 插件无条件创建（`index.ts`: `new ConnectionAuthentication(ctx)`），所以声明不会解析落空；`resolveServices` 的容错路径保留，没有 carrier 的树依旧只是静默不激活。
+
+**教训**：`admit()` 抛出的异常会被误报成"未授权"，与"凭据无效"无法区分。因此 RPC 处理函数现在把判定依据（Host、Origin、`sec-fetch-site`、**Cookie 名称**、结果）写进 `~/.dsh/remote-control/sockets.log`——凭据本身从不落盘。正是这条记录把排查从"猜凭据"直接指向了真正的那一行。
+
 ## 兼容与失效
 
-只读上游公开面：`webServer.{host,port,protocol,getOrigin,register}`, `webserver/index-inject`, `connection.{authenticatedUrl,rpc.handle}`, 客户端 `connection.{rpc,state,reconnect}`、`slots`、`locale`。
+只读上游公开面：`webServer.{host,port,protocol,getOrigin,register}`, `webserver/index-inject`, `webserver/entry-url`, `connection.{admit,authentication,rpc.handle}`, 客户端 `connection.{rpc,state,reconnect}`、`slots`、`locale`。
 
 - 状态文件 `version: 2`；v1 的 `devices.json` 不兼容（旧 Cookie 绑定的是 Harness authority，无法平移），读到即按空状态处理并重写。
 - 卸载插件：监听器关闭（`ctx.effect` 的 teardown）、RPC 频道注销、索引行消失；状态文件保留，重装后密码与设备台账仍在。

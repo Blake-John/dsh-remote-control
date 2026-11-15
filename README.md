@@ -87,7 +87,7 @@ plugin_manager action=install_bundle target=/绝对路径/dsh-remote-control
 ## 测试与验证
 
 ```bash
-node --test tests/*.test.mjs    # 56 条：逻辑单测 + 真实 socket 的端到端 + 浏览器半静态守卫
+node --test tests/*.test.mjs    # 58 条：逻辑单测 + 真实 socket 的端到端 + 浏览器半静态守卫
 node --check index.js client.js lib/*.js
 ```
 
